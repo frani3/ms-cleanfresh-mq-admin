@@ -1,0 +1,22 @@
+server:
+  port: 8086
+spring:
+  application:
+    name: ms-cleanfresh-mq-admin
+
+# API de administración de RabbitMQ (la del panel). Sin valores por defecto para las credenciales.
+mq:
+  # Una o más URL separadas por coma: si el primer nodo no responde, se prueba el siguiente.
+  api-urls: ${RABBITMQ_MGMT_URLS:http://localhost:15672/api,http://localhost:15673/api}
+  user: ${RABBITMQ_USER}
+  password: ${RABBITMQ_PASSWORD}
+  vhost: /
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
