@@ -31,7 +31,9 @@ sistema no se crean, eliminan ni enlazan; solo existen los tipos `direct` y `top
 responde ningún nodo, 503.
 
 Cada DLQ con mensajes se anota como `WARN` en el log (`ALERTA DLQ: ...`) cada vez que se piden las
-métricas. Las cifras vienen de las estadísticas de la API de RabbitMQ, que se refrescan cada pocos segundos:
+métricas. Además, el administrador **revisa las DLQ por su cuenta** cada 30 s: deja una advertencia cuando
+una DLQ pasa a tener mensajes (o cambia su cantidad) y un aviso cuando vuelven a estar vacías, sin repetir
+la misma línea en cada vuelta. Las cifras vienen de las estadísticas de la API de RabbitMQ, que se refrescan cada pocos segundos:
 un mensaje recién publicado o consumido puede tardar unos segundos en verse.
 
 La política de alta disponibilidad (`ha-all`) cubre las colas `q.cmd.*`: una cola creada con otro nombre no
@@ -43,6 +45,8 @@ queda replicada en los dos nodos.
 |---|---|
 | `RABBITMQ_USER` / `RABBITMQ_PASSWORD` | Credenciales con permiso de administración (sin valor por defecto: sin ellas no arranca) |
 | `RABBITMQ_MGMT_URLS` | URL de la API de cada nodo, separadas por coma; si el primero no responde se prueba el siguiente. Por defecto `http://localhost:15672/api,http://localhost:15673/api` |
+| `MQ_ALERTAS_ACTIVAS` | `false` apaga la revisión periódica de las DLQ (por defecto `true`) |
+| `MQ_ALERTAS_INTERVALO_MS` | Cada cuánto se revisan (por defecto `30000`) |
 
 ## Levantar en local
 

@@ -11,6 +11,9 @@ mq:
   user: ${RABBITMQ_USER}
   password: ${RABBITMQ_PASSWORD}
   vhost: /
+  # Revisión periódica de las DLQ: avisa en el log cuando una pasa a tener mensajes.
+  alertas-activas: ${MQ_ALERTAS_ACTIVAS:true}
+  alertas-intervalo-ms: ${MQ_ALERTAS_INTERVALO_MS:30000}
 
 management:
   endpoints:

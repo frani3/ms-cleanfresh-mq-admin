@@ -87,9 +87,7 @@ public class MqAdminService {
         rabbit.declararExchange(TopologiaBase.EXCHANGE_MUERTOS, "direct");
         rabbit.declararCola(dlq, Map.of());
         rabbit.crearBinding(TopologiaBase.EXCHANGE_MUERTOS, dlq, clave);
-        rabbit.declararCola(nombre, Map.of(
-                "x-dead-letter-exchange", TopologiaBase.EXCHANGE_MUERTOS,
-                "x-dead-letter-routing-key", clave));
+        rabbit.declararCola(nombre, argumentosDlq(clave));
         hecho.add("cola " + dlq + " enlazada a " + TopologiaBase.EXCHANGE_MUERTOS + " con la clave " + clave);
         hecho.add("cola " + nombre + " (los mensajes rechazados van a " + dlq + ")");
         log.info("Cola creada: {} (con DLQ {})", nombre, dlq);
@@ -164,9 +162,7 @@ public class MqAdminService {
         hecho.add(TopologiaBase.EXCHANGES.size() + " exchanges");
         for (Cola c : TopologiaBase.COLAS) {
             rabbit.declararCola(c.dlq(), Map.of());
-            rabbit.declararCola(c.nombre(), Map.of(
-                    "x-dead-letter-exchange", TopologiaBase.EXCHANGE_MUERTOS,
-                    "x-dead-letter-routing-key", c.claveMuertos()));
+            rabbit.declararCola(c.nombre(), argumentosDlq(c.claveMuertos()));
         }
         hecho.add(TopologiaBase.COLAS.size() * 2 + " colas (3 de comandos y sus 3 DLQ)");
         for (Binding b : TopologiaBase.BINDINGS) {
@@ -184,6 +180,13 @@ public class MqAdminService {
 
     /** Mensajes por cola y por DLQ. Cada DLQ que no está vacía genera una alerta y una advertencia en el log. */
     public Metricas metricas() {
+        Metricas m = medir();
+        m.alertas().forEach(a -> log.warn("ALERTA DLQ: {}", a));
+        return m;
+    }
+
+    /** Lo mismo que {@link #metricas()} pero sin escribir en el log (lo usa la revisión periódica). */
+    public Metricas medir() {
         List<ColaMetrica> colas = rabbit.colas().stream().map(q -> {
             String nombre = texto(q, "name");
             return new ColaMetrica(nombre, nombre.endsWith(".dlq"), numero(q, "messages"),
@@ -191,12 +194,16 @@ public class MqAdminService {
         }).sorted(Comparator.comparing(ColaMetrica::dlq).thenComparing(ColaMetrica::nombre)).toList();
         List<String> alertas = colas.stream().filter(c -> c.dlq() && c.mensajes() > 0)
                 .map(c -> "La DLQ " + c.nombre() + " tiene " + c.mensajes() + " mensaje(s) sin atender").toList();
-        alertas.forEach(a -> log.warn("ALERTA DLQ: {}", a));
         long enDlq = colas.stream().filter(ColaMetrica::dlq).mapToLong(ColaMetrica::mensajes).sum();
         return new Metricas(colas, enDlq, !alertas.isEmpty(), alertas);
     }
 
     // ---------- interno ----------
+
+    // Argumentos con los que una cola manda sus mensajes rechazados a cmd.dead.dlx.
+    private static Map<String, Object> argumentosDlq(String clave) {
+        return Map.of("x-dead-letter-exchange", TopologiaBase.EXCHANGE_MUERTOS, "x-dead-letter-routing-key", clave);
+    }
 
     private static ColaInfo aCola(Map<String, Object> q) {
         String nombre = texto(q, "name");
