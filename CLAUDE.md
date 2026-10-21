@@ -326,7 +326,10 @@ sale del token; ajeno o inexistente = 404; Admin = 403) → `PUT /api/notificaci
 `notificaciones`. El cambio de estado de una orden se guarda en el backend (`PUT /api/orders/{numeroOrden}/estado`) y no se
 restringen los saltos de estado. **Actualización automática (Spec 035):** "Tus pedidos" del Cliente se consulta cada
 15 s y, tanto en el Cliente como en el Operador, al llegar un aviso nuevo se refrescan las órdenes (el Admin no: sus
-órdenes creadas a mano en pantalla se perderían). La tabla `notificaciones` es única por `(tipo, numero_orden,
+órdenes creadas a mano en pantalla se perderían). **Fecha y hora (Spec 036):** `orders` guarda el instante de creación de cada orden nueva (`fecha_hora`, devuelto como
+`fechaHora`; las anteriores no lo tienen y se muestran solo con la fecha). "Gestión de órdenes" (Operador) y
+"Tus pedidos" (Cliente) muestran fecha y hora y van con el más reciente arriba (`src/utils/orders.js`); el Admin no cambia.
+La tabla `notificaciones` es única por `(tipo, numero_orden,
 mensaje)`; `MigracionEsquema` quita al arrancar la restricción vieja `(tipo, numero_orden)` de una base existente.
 
 **Nombre legible (Spec 032):** una orden guarda `cliente` (el `username` de Cognito, un UUID, que
