@@ -347,7 +347,8 @@ Reemplaza a SQS. Clúster de dos nodos (`rabbit1`, `rabbit2`) en su propia EC2, 
 `cmd.direct` (direct), `cmd.topic` (topic) y `cmd.dead.dlx` (direct). **Topología como la guía del profesor (Spec 037):** colas
 sin argumentos, dead-lettering por **políticas** (`policy.email.dlx`, `policy.kitchen.dlx`, `policy.invoice.dlx`; prioridad 1, llevan
 también la replicación porque solo rige una política por cola) y 9 bindings (`cmd.topic`: `email.#`, `kitchen.#`, `invoice.#`). **Los servicios se ven por su nombre en la consola de RabbitMQ (Spec 038):**
-conexiones `ms-cleanfresh-notificaciones` y `ms-cleanfresh-orders`, y consumidores `ms-cleanfresh-notificaciones.<cola>`. La demostración para el
+conexiones `ms-cleanfresh-notificaciones` y `ms-cleanfresh-orders`, y consumidores `ms-cleanfresh-notificaciones.<cola>`. Cada mensaje lleva su **tipo de notificación** como propiedad AMQP `type` (`ORDEN_CREADA`, `ORDEN_LISTA`, `ORDEN_ESTADO`) y las cabeceras
+`destinatario` (`SUCURSAL`/`CLIENTE`/`TALLER`) y `estado`, visibles en la consola en Queues → cola → Get messages (Spec 039). La demostración para el
 profesor (notificaciones en los dos sentidos y con el servicio caído) es `EP2/despliegue/demo-notificaciones.sh` (guía 5.9). `orders` publica comandos
 (`email.send`, `kitchen.ticket`, `invoice.gen`; las órdenes de *Servicio exprés* van por `cmd.topic` con las
 variantes `.high`, `.thermal` y `.pdf`) y `notificaciones` los consume con ACK manual, 3 intentos e idempotencia por
