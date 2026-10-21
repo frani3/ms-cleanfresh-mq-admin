@@ -87,9 +87,9 @@ laboratorio, y en EP2 se recreó con otra arquitectura. El frontend sigue en
 | Recurso | Valor |
 |---|---|
 | EC2 #1 `cleanfresh-bff` (`t3.small`) | **Elastic IP `3.213.118.143`**:8080 (IP fija), BFF en Docker; IP privada `172.31.33.129` |
-| EC2 #2 `cleanfresh-ms` (`t3.medium`) | IP privada `172.31.39.91`; IP pública variable (cambia al apagar el laboratorio; última conocida `32.198.12.185`, solo se usa para SSH). 6 microservicios con `docker compose` en 8081–8086 (el 8086 es el administrador de RabbitMQ) |
+| EC2 #2 `cleanfresh-ms` (`t3.medium`) | IP privada `172.31.39.91`; IP pública variable (cambia al apagar el laboratorio; última conocida `18.215.249.240`, solo se usa para SSH). 6 microservicios con `docker compose` en 8081–8086 (el 8086 es el administrador de RabbitMQ) |
 | RDS PostgreSQL 16 `cleanfresh-db` | `cleanfresh-db.cjeictyledp6.us-east-1.rds.amazonaws.com:5432`, bases `orders_db`, `catalog_db` y `notificaciones_db`, un usuario por servicio, sin acceso público |
-| EC2 #3 `cleanfresh-mq` (`t3.medium`) | IP privada `172.31.18.141` (la que usan los servicios); IP pública variable (última conocida `18.212.237.210`, solo SSH y panel). Clúster RabbitMQ de dos nodos con `docker compose` en `~/mq`: AMQP 5672 y 5673, panel y API de administración 15672 y 15673 (Spec 033). Reemplaza a SQS: la cola `cleanfresh-ordenes` se eliminó |
+| EC2 #3 `cleanfresh-mq` (`t3.medium`) | IP privada `172.31.18.141` (la que usan los servicios); IP pública variable (última conocida `34.228.79.85`, solo SSH y panel). Clúster RabbitMQ de dos nodos con `docker compose` en `~/mq`: AMQP 5672 y 5673, panel y API de administración 15672 y 15673 (Spec 033). Reemplaza a SQS: la cola `cleanfresh-ordenes` se eliminó |
 | API Gateway (`cleanfresh-api`, HTTP API) | `https://0ksy5y3586.execute-api.us-east-1.amazonaws.com` |
 | Ruta `ANY /{proxy+}` | → BFF, con JWT Authorizer de Cognito (audience = client id) |
 | Ruta `OPTIONS /{proxy+}` | → BFF, sin authorizer (el preflight no manda token) |
@@ -346,7 +346,9 @@ Reemplaza a SQS. Clúster de dos nodos (`rabbit1`, `rabbit2`) en su propia EC2, 
 `ha-all`), 3 colas de comandos (`q.cmd.email`, `q.cmd.kitchen`, `q.cmd.invoice`) cada una con su DLQ, y los exchanges
 `cmd.direct` (direct), `cmd.topic` (topic) y `cmd.dead.dlx` (direct). **Topología como la guía del profesor (Spec 037):** colas
 sin argumentos, dead-lettering por **políticas** (`policy.email.dlx`, `policy.kitchen.dlx`, `policy.invoice.dlx`; prioridad 1, llevan
-también la replicación porque solo rige una política por cola) y 9 bindings (`cmd.topic`: `email.#`, `kitchen.#`, `invoice.#`). `orders` publica comandos
+también la replicación porque solo rige una política por cola) y 9 bindings (`cmd.topic`: `email.#`, `kitchen.#`, `invoice.#`). **Los servicios se ven por su nombre en la consola de RabbitMQ (Spec 038):**
+conexiones `ms-cleanfresh-notificaciones` y `ms-cleanfresh-orders`, y consumidores `ms-cleanfresh-notificaciones.<cola>`. La demostración para el
+profesor (notificaciones en los dos sentidos y con el servicio caído) es `EP2/despliegue/demo-notificaciones.sh` (guía 5.9). `orders` publica comandos
 (`email.send`, `kitchen.ticket`, `invoice.gen`; las órdenes de *Servicio exprés* van por `cmd.topic` con las
 variantes `.high`, `.thermal` y `.pdf`) y `notificaciones` los consume con ACK manual, 3 intentos e idempotencia por
 `eventId`; lo que falla va a la DLQ y queda registrado (`/api/muertos`). `ms-cleanfresh-mq-admin` crea y elimina
