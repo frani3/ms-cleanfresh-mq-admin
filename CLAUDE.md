@@ -309,8 +309,10 @@ const isAdmin = roles.includes("Admin");
 
 ### Avisos por rol (Spec 030)
 
-`orders` publica comandos por RabbitMQ al crear una orden (`ORDEN_CREADA`) y al pasar a
-`DESPACHADO` (`ORDEN_LISTA`) (Spec 033; antes era SQS); `notificaciones` guarda los avisos dirigidos en
+`orders` publica comandos por RabbitMQ al crear una orden (`ORDEN_CREADA`), al pasar a
+`DESPACHADO` (`ORDEN_LISTA`: aviso y boleta) y, desde la Spec 035, en **cada cambio de estado** a ACEPTADO,
+EN_PREPARACION, ENTREGADO o CANCELADO (`ORDEN_ESTADO`, aviso solo al Cliente; repetir el estado o volver a CREADO
+no avisa) (Spec 033; antes era SQS); `notificaciones` guarda los avisos dirigidos en
 su base: el de pedido nuevo va a la **sucursal** de la orden (le llega al Operador
 que la tenga en turno) y el de pedido listo al **cliente** dueño (su `username`).
 El BFF decide qué ve cada rol (el Cliente solo lo suyo por el `username` del token;
@@ -321,7 +323,11 @@ Admin y una tarjeta de ancho completo para el Operador y el Cliente, con filtro 
 campanita del encabezado solo muestra el contador y lleva al módulo. El Admin lo ve en solo lectura, con el
 destinatario de cada aviso. Para marcar uno: `POST /api/notificaciones/{id}/leida` en el BFF (el destinatario
 sale del token; ajeno o inexistente = 404; Admin = 403) → `PUT /api/notificaciones/{id}/leida` en
-`notificaciones`. El cambio de estado de una orden se guarda en el backend (`PUT /api/orders/{numeroOrden}/estado`).
+`notificaciones`. El cambio de estado de una orden se guarda en el backend (`PUT /api/orders/{numeroOrden}/estado`) y no se
+restringen los saltos de estado. **Actualización automática (Spec 035):** "Tus pedidos" del Cliente se consulta cada
+15 s y, tanto en el Cliente como en el Operador, al llegar un aviso nuevo se refrescan las órdenes (el Admin no: sus
+órdenes creadas a mano en pantalla se perderían). La tabla `notificaciones` es única por `(tipo, numero_orden,
+mensaje)`; `MigracionEsquema` quita al arrancar la restricción vieja `(tipo, numero_orden)` de una base existente.
 
 **Nombre legible (Spec 032):** una orden guarda `cliente` (el `username` de Cognito, un UUID, que
 dice de quién es) y, aparte, `clienteNombre` (el `name` o el `email` del usuario). El BFF lo pide a
