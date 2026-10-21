@@ -57,6 +57,7 @@ no el correo.
 | MS Notificaciones (EP2) | https://github.com/frani3/ms-cleanfresh-notificaciones |
 | MS Reportes (EP2) | https://github.com/frani3/ms-cleanfresh-reportes |
 | MS Auditoría (EP2) | https://github.com/frani3/ms-cleanfresh-auditoria |
+| MS Administrador de RabbitMQ (EP2) | https://github.com/frani3/ms-cleanfresh-mq-admin |
 
 ---
 
@@ -71,6 +72,8 @@ no el correo.
 | ms-cleanfresh-notificaciones (EP2) | http://localhost:8083 |
 | ms-cleanfresh-reportes (EP2) | http://localhost:8084 |
 | ms-cleanfresh-auditoria (EP2) | http://localhost:8085 |
+| ms-cleanfresh-mq-admin (EP2) | http://localhost:8086 |
+| RabbitMQ (AMQP / panel), clúster local de `EP2/despliegue/mq/` | localhost:5672–5673 / http://localhost:15672–15673 |
 
 ---
 
@@ -84,9 +87,9 @@ laboratorio, y en EP2 se recreó con otra arquitectura. El frontend sigue en
 | Recurso | Valor |
 |---|---|
 | EC2 #1 `cleanfresh-bff` (`t3.small`) | **Elastic IP `3.213.118.143`**:8080 (IP fija), BFF en Docker; IP privada `172.31.33.129` |
-| EC2 #2 `cleanfresh-ms` (`t3.medium`) | IP privada `172.31.39.91`; IP pública variable (cambia al apagar el laboratorio; última conocida `52.90.146.243`, solo se usa para SSH). 5 microservicios con `docker compose` en 8081–8085 |
+| EC2 #2 `cleanfresh-ms` (`t3.medium`) | IP privada `172.31.39.91`; IP pública variable (cambia al apagar el laboratorio; última conocida `32.198.12.185`, solo se usa para SSH). 6 microservicios con `docker compose` en 8081–8086 (el 8086 es el administrador de RabbitMQ) |
 | RDS PostgreSQL 16 `cleanfresh-db` | `cleanfresh-db.cjeictyledp6.us-east-1.rds.amazonaws.com:5432`, bases `orders_db`, `catalog_db` y `notificaciones_db`, un usuario por servicio, sin acceso público |
-| SQS | cola Standard `cleanfresh-ordenes` (`us-east-1`); las EC2 usan el `LabInstanceProfile` |
+| EC2 #3 `cleanfresh-mq` (`t3.medium`) | IP privada `172.31.18.141` (la que usan los servicios); IP pública variable (última conocida `18.212.237.210`, solo SSH y panel). Clúster RabbitMQ de dos nodos con `docker compose` en `~/mq`: AMQP 5672 y 5673, panel y API de administración 15672 y 15673 (Spec 033). Reemplaza a SQS: la cola `cleanfresh-ordenes` se eliminó |
 | API Gateway (`cleanfresh-api`, HTTP API) | `https://0ksy5y3586.execute-api.us-east-1.amazonaws.com` |
 | Ruta `ANY /{proxy+}` | → BFF, con JWT Authorizer de Cognito (audience = client id) |
 | Ruta `OPTIONS /{proxy+}` | → BFF, sin authorizer (el preflight no manda token) |
@@ -100,8 +103,9 @@ cobra: liberarla al terminar la evaluación. Al reiniciar, los contenedores arra
 (`restart: unless-stopped`).
 
 Grupos de seguridad: `cleanfresh-sg-bff` (8080 público, 22 desde la IP del
-autor), `cleanfresh-sg-ms` (8081–8085 solo desde `cleanfresh-sg-bff`) y
-`cleanfresh-sg-rds` (5432 solo desde `cleanfresh-sg-ms`).
+autor), `cleanfresh-sg-ms` (8081–8086 solo desde `cleanfresh-sg-bff`), `cleanfresh-sg-rds` (5432 solo desde
+`cleanfresh-sg-ms`) y `cleanfresh-sg-mq` (5672–5673 y 15672–15673 desde `cleanfresh-sg-ms`; panel y SSH desde la IP del
+autor). Las IP de `ms` y `mq` cambian al apagar el laboratorio: el BFF y los servicios usan las IP privadas.
 
 **CORS**: lo resuelve el propio BFF; no se configura CORS en API Gateway (si se
 activa, pisa los headers del BFF y rompe el preflight).
@@ -111,7 +115,7 @@ activa, pisa los headers del BFF y rompe el preflight).
 reinicio; por eso es `t3.medium`.
 
 **Costo real:** son recursos reales de AWS con costo — apagar o eliminar las
-2 EC2, la RDS y la API Gateway después de la evaluación si no se van a usar.
+3 EC2, la RDS y la API Gateway después de la evaluación si no se van a usar.
 
 ---
 
@@ -227,7 +231,8 @@ src/main/java/com/cleanfresh/ms_cleanfresh_bff/
 │   ├── NotificacionController.java # GET /api/notificaciones, POST /api/notificaciones/leidas — filtrados por rol (Spec 030)
 │   ├── CatalogController.java     # GET /api/catalog, /api/catalog/{id}, /api/catalog/disponibles
 │   ├── ReportesController.java    # GET /api/reportes — solo Admin (EP2, respuesta fija)
-│   └── AuditoriaController.java   # GET /api/auditoria — solo Admin (EP2, respuesta fija)
+│   ├── AuditoriaController.java   # GET /api/auditoria — solo Admin (EP2, respuesta fija)
+│   └── MqAdminController.java     # GET/POST/DELETE /api/mq/** — solo Admin; reenvía al administrador de RabbitMQ (:8086) con lista blanca de rutas (Spec 033)
 ├── service/
 │   ├── OrderService.java
 │   ├── CatalogService.java
@@ -297,8 +302,8 @@ const isAdmin = roles.includes("Admin");
 
 ### Avisos por rol (Spec 030)
 
-`orders` publica `ORDEN_CREADA` (al crear una orden) y `ORDEN_LISTA` (al pasar a
-`DESPACHADO`) en la cola SQS; `notificaciones` los guarda como avisos dirigidos en
+`orders` publica comandos por RabbitMQ al crear una orden (`ORDEN_CREADA`) y al pasar a
+`DESPACHADO` (`ORDEN_LISTA`) (Spec 033; antes era SQS); `notificaciones` guarda los avisos dirigidos en
 su base: el de pedido nuevo va a la **sucursal** de la orden (le llega al Operador
 que la tenga en turno) y el de pedido listo al **cliente** dueño (su `username`).
 El BFF decide qué ve cada rol (el Cliente solo lo suyo por el `username` del token;
@@ -311,6 +316,20 @@ dice de quién es) y, aparte, `clienteNombre` (el `name` o el `email` del usuari
 Cognito con el access token del usuario (`/oauth2/userInfo`, usa `COGNITO_DOMAIN`); nunca lo manda el
 navegador. Las pantallas y los avisos muestran `clienteNombre` y, si no existe, `cliente`. El
 Cliente ahora elige la sucursal en el catálogo y ve qué servicios hay disponibles allí.
+
+---
+
+### Mensajería con RabbitMQ (Spec 033)
+
+Reemplaza a SQS. Clúster de dos nodos (`rabbit1`, `rabbit2`) en su propia EC2, con colas espejadas (política
+`ha-all`), 3 colas de comandos (`q.cmd.email`, `q.cmd.kitchen`, `q.cmd.invoice`) cada una con su DLQ, y los exchanges
+`cmd.direct` (direct), `cmd.topic` (topic) y `cmd.dead.dlx` (direct). `orders` publica comandos
+(`email.send`, `kitchen.ticket`, `invoice.gen`; las órdenes de *Servicio exprés* van por `cmd.topic` con las
+variantes `.high`, `.thermal` y `.pdf`) y `notificaciones` los consume con ACK manual, 3 intentos e idempotencia por
+`eventId`; lo que falla va a la DLQ y queda registrado (`/api/muertos`). `ms-cleanfresh-mq-admin` crea y elimina
+colas, exchanges y bindings, declara la topología base y da métricas con alerta de DLQ; se llega solo por
+el BFF (`/api/mq/**`, rol Admin). Archivos y scripts de verificación en `EP2/despliegue/mq/`; detalle en
+`EP2/specs/033-spec-rabbitmq.md` y `EP2/ARQUITECTURA.md`. Es opcional en local (`RABBIT_ENABLED=false`).
 
 ---
 
@@ -338,8 +357,11 @@ $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
 # (EP2) orders, catalog y notificaciones necesitan una base PostgreSQL: sin
 # DB_URL/DB_USER/DB_PASSWORD no arrancan. Ver el README de cada repo para levantar una
 # con Docker (orders_db / catalog_db, un usuario por servicio).
-# (EP2) SQS: orders y notificaciones lo traen apagado (SQS_ENABLED=false); para
-# activarlo y probarlo en local con ElasticMQ, ver el README de cada uno.
+# (EP2) RabbitMQ: orders y notificaciones lo traen apagado (RABBIT_ENABLED=false); para
+# activarlo, levantar el clúster local de EP2/despliegue/mq/ (docker compose up -d) y
+# definir RABBIT_ENABLED=true, RABBITMQ_ADDRESSES=localhost:5672,localhost:5673,
+# RABBITMQ_USER y RABBITMQ_PASSWORD. El administrador (ms-cleanfresh-mq-admin, 8086)
+# necesita RABBITMQ_USER y RABBITMQ_PASSWORD.
 
 # Terminal 1 — ms-cleanfresh-orders (puerto 8081)
 cd C:\Users\franc\ms-cleanfresh-orders
@@ -473,9 +495,13 @@ de tocar algo ya resuelto.
 
 ## Pendientes
 
+- [ ] **Spec 033 (RabbitMQ):** falta probar el 403 de `/api/mq/**` con el rol Cliente (solo se probó Operador, y
+  Admin con 200) y repetir en AWS la creación/eliminación de colas desde el administrador (se verificó contra el
+  clúster local). La DLQ de `q.cmd.invoice` solo se probó en vivo en local.
+
 - [x] Conectar microservicios a **base de datos cloud** con entidades JPA y repositorios Spring Data — hecho en EP2 (Spec 029): `orders` y `catalog` sobre PostgreSQL en RDS, verificado en vivo
 - [x] Migración a Cognito probada en vivo (Fix 027) — login, interceptor y creación de pedidos por Cliente confirmados funcionando; se corrigieron 3 problemas reales en el proceso (typo de `.env`, jar del BFF desactualizado, mismatch `username`/email en "Tus pedidos") y se agregó validación de `scope` en `CognitoTokenValidator`
-- [ ] **Al terminar la evaluación:** liberar la Elastic IP `3.213.118.143` y apagar o eliminar las 2 EC2, la RDS y la API Gateway (cobran mientras existan)
+- [ ] **Al terminar la evaluación:** liberar la Elastic IP `3.213.118.143` y apagar o eliminar las 3 EC2, la RDS y la API Gateway (cobran mientras existan)
 - [ ] El mapa `SUCURSAL_POR_OPERADOR` en `OrderService.java` (BFF) sigue con el valor viejo de Azure (`operador@cleanfreshchain.onmicrosoft.com`), así que no coincide con el `username` (UUID) del Operador de Cognito. No bloquea nada: el Operador filtra por su selector "Sucursal en turno" (`?sucursal=`), y el mapa solo es un respaldo
 - [x] Grupos de Cognito `Admin`/`Operador`/`Cliente` confirmados en vivo en EP2: el Admin ve Reportería/Auditoría y recibe 200 en `/api/reportes` y `/api/auditoria`; el Operador recibe 403 en ambas
 - [ ] **Seguridad:** `GET /api/orders` devuelve todas las órdenes a un Cliente; hoy es la pantalla la que filtra las suyas en el navegador. Debería filtrarse en el BFF por el `username` del token (como ya se hace con los avisos)
