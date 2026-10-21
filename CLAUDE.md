@@ -267,7 +267,14 @@ src/
 ├── components/
 │   ├── AuthGuard.jsx               # Pantalla de login / protección de la app
 │   ├── Navbar.jsx                  # Logo, nombre usuario, rol, botón logout
-│   └── NotificationBell.jsx        # Campanita de avisos con contador (Spec 030)
+│   ├── NotificationBell.jsx        # Campanita del encabezado: contador de sin leer que lleva al módulo (Specs 030 y 034)
+│   ├── NotificationsPanel.jsx      # Módulo de notificaciones: lista, filtro Todas/Sin leer y botón de leído (Spec 034)
+│   └── OrderFilters.jsx            # Búsqueda y filtros de órdenes (Spec 031)
+├── hooks/
+│   ├── useNotifications.js         # Una sola consulta de avisos cada 15 s, compartida por campanita y módulo (Spec 034)
+│   └── useOrderFilters.js
+├── utils/
+│   └── notifications.js            # Lógica pura de los avisos (formato, filtro, destinatario) + notifications.test.js
 ├── pages/
 │   └── BentoDashboard.jsx         # Dashboard bento único con tarjetas por rol
 └── services/
@@ -308,8 +315,13 @@ su base: el de pedido nuevo va a la **sucursal** de la orden (le llega al Operad
 que la tenga en turno) y el de pedido listo al **cliente** dueño (su `username`).
 El BFF decide qué ve cada rol (el Cliente solo lo suyo por el `username` del token;
 el Operador los de su sucursal en turno; el Admin todos, en solo lectura) y el
-frontend los muestra en la campanita. El cambio de estado de una orden ahora se
-guarda en el backend (`PUT /api/orders/{numeroOrden}/estado`).
+frontend los muestra en el **módulo de notificaciones** (Spec 034): una pestaña propia para el
+Admin y una tarjeta de ancho completo para el Operador y el Cliente, con filtro Todas/Sin leer y botón
+**Marcar leído** por aviso (más "Marcar todas leídas"). Ver un aviso ya no lo marca como leído; la
+campanita del encabezado solo muestra el contador y lleva al módulo. El Admin lo ve en solo lectura, con el
+destinatario de cada aviso. Para marcar uno: `POST /api/notificaciones/{id}/leida` en el BFF (el destinatario
+sale del token; ajeno o inexistente = 404; Admin = 403) → `PUT /api/notificaciones/{id}/leida` en
+`notificaciones`. El cambio de estado de una orden se guarda en el backend (`PUT /api/orders/{numeroOrden}/estado`).
 
 **Nombre legible (Spec 032):** una orden guarda `cliente` (el `username` de Cognito, un UUID, que
 dice de quién es) y, aparte, `clienteNombre` (el `name` o el `email` del usuario). El BFF lo pide a
