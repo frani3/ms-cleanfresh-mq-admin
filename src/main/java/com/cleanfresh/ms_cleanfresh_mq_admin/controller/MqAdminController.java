@@ -36,7 +36,7 @@ public class MqAdminController {
     }
 
     @PostMapping("/queues/{nombre}")
-    @Operation(summary = "Crea una cola durable, por defecto con su DLQ (nombre.dlq) enlazada a cmd.dead.dlx")
+    @Operation(summary = "Crea una cola durable sin argumentos, por defecto con su DLQ (nombre.dlq) enlazada a cmd.dead.dlx y su política de DLX (409 si ya existe)")
     public Resultado crearCola(@PathVariable String nombre, @RequestBody(required = false) ColaRequest solicitud) {
         return servicio.crearCola(nombre, solicitud);
     }
@@ -72,7 +72,7 @@ public class MqAdminController {
     }
 
     @PostMapping("/topologia/base")
-    @Operation(summary = "Declara de nuevo la topología del enunciado (3 exchanges, 6 colas, 11 bindings y la política de alta disponibilidad). Idempotente")
+    @Operation(summary = "Declara de nuevo la topología de la guía (3 exchanges, 6 colas, 9 bindings y las políticas de DLX y de alta disponibilidad). Idempotente")
     public Resultado declararBase() {
         return servicio.declararBase();
     }

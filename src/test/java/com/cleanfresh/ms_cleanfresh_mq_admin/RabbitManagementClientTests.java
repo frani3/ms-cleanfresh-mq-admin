@@ -150,4 +150,18 @@ class RabbitManagementClientTests {
         assertThrows(HttpClientErrorException.NotFound.class, () -> c.eliminarCola("fantasma"));
         assertEquals(1, pedidos.size());
     }
+
+    @Test
+    void ponerYEliminarUnaPoliticaUsanSuNombreEnLaRuta() {
+        RabbitManagementClient c = cliente(url());
+
+        c.ponerPolitica("policy.pagos.dlx", Map.of("pattern", "^q\\.pagos$", "apply-to", "queues", "priority", 1,
+                "definition", Map.of("dead-letter-exchange", "cmd.dead.dlx")));
+        c.eliminarPolitica("policy.pagos.dlx");
+
+        assertEquals("PUT /api/policies/%2F/policy.pagos.dlx", pedidos.get(0));
+        assertTrue(cuerpos.get(0).contains("\"dead-letter-exchange\":\"cmd.dead.dlx\""));
+        assertTrue(cuerpos.get(0).contains("\"priority\":1"));
+        assertEquals("DELETE /api/policies/%2F/policy.pagos.dlx", pedidos.get(1));
+    }
 }

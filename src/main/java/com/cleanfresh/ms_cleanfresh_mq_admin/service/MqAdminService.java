@@ -67,9 +67,18 @@ public class MqAdminService {
 
     // ---------- colas ----------
 
-    /** Crea una cola durable; por defecto con su DLQ ({@code nombre.dlq}) enlazada a {@code cmd.dead.dlx}. */
+    /**
+     * Crea una cola durable sin argumentos; por defecto con su DLQ ({@code nombre.dlq}) enlazada a {@code cmd.dead.dlx} y
+     * una política {@code policy.<nombre>.dlx} que le asigna ese DLX, como en la guía del profesor (Spec 037).
+     */
     public Resultado crearCola(String nombre, ColaRequest solicitud) {
         validarNombre(nombre, "cola");
+        // Con el DLX en una política (y no en argumentos de la cola), RabbitMQ ya no rechaza redeclarar una cola
+        // existente "distinta": se pisaría la política de una cola que ya funciona (p. ej. policy.email.dlx).
+        // Una cola que ya existe no se vuelve a crear.
+        if (rabbit.colas().stream().anyMatch(q -> nombre.equals(texto(q, "name")))) {
+            throw error(HttpStatus.CONFLICT, "La cola " + nombre + " ya existe");
+        }
         boolean conDlq = solicitud == null || solicitud.conDlq() == null || solicitud.conDlq();
         List<String> hecho = new ArrayList<>();
         if (!conDlq) {
@@ -87,9 +96,12 @@ public class MqAdminService {
         rabbit.declararExchange(TopologiaBase.EXCHANGE_MUERTOS, "direct");
         rabbit.declararCola(dlq, Map.of());
         rabbit.crearBinding(TopologiaBase.EXCHANGE_MUERTOS, dlq, clave);
-        rabbit.declararCola(nombre, argumentosDlq(clave));
+        rabbit.declararCola(nombre, Map.of());
+        // la política va después de crear la cola: así RabbitMQ crea también sus espejos
+        String politica = TopologiaBase.nombrePoliticaDlx(nombre);
+        rabbit.ponerPolitica(politica, TopologiaBase.politicaDlx(nombre, clave));
         hecho.add("cola " + dlq + " enlazada a " + TopologiaBase.EXCHANGE_MUERTOS + " con la clave " + clave);
-        hecho.add("cola " + nombre + " (los mensajes rechazados van a " + dlq + ")");
+        hecho.add("cola " + nombre + " con la política " + politica + " (los mensajes rechazados van a " + dlq + ")");
         log.info("Cola creada: {} (con DLQ {})", nombre, dlq);
         return new Resultado("cola creada", hecho);
     }
@@ -99,6 +111,14 @@ public class MqAdminService {
         List<String> hecho = new ArrayList<>();
         rabbit.eliminarCola(nombre);
         hecho.add("cola " + nombre + " eliminada");
+        // su política de dead-lettering ya no tiene a quién aplicarse (puede no existir si la cola se creó sin DLQ)
+        String politica = TopologiaBase.nombrePoliticaDlx(nombre);
+        try {
+            rabbit.eliminarPolitica(politica);
+            hecho.add("política " + politica + " eliminada");
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound e) {
+            // no había política: la cola no tenía DLQ asociada
+        }
         if (conDlq) {
             String dlq = nombre + ".dlq";
             try {
@@ -162,16 +182,20 @@ public class MqAdminService {
         hecho.add(TopologiaBase.EXCHANGES.size() + " exchanges");
         for (Cola c : TopologiaBase.COLAS) {
             rabbit.declararCola(c.dlq(), Map.of());
-            rabbit.declararCola(c.nombre(), argumentosDlq(c.claveMuertos()));
+            rabbit.declararCola(c.nombre(), Map.of());
         }
-        hecho.add(TopologiaBase.COLAS.size() * 2 + " colas (3 de comandos y sus 3 DLQ)");
+        hecho.add(TopologiaBase.COLAS.size() * 2 + " colas sin argumentos (3 de comandos y sus 3 DLQ)");
         for (Binding b : TopologiaBase.BINDINGS) {
             rabbit.crearBinding(b.exchange(), b.cola(), b.clave());
         }
         hecho.add(TopologiaBase.BINDINGS.size() + " bindings");
-        // al final, con las colas ya creadas, para que sí se creen los espejos
+        // las políticas van al final, con las colas ya creadas, para que sí se creen los espejos
+        for (Cola c : TopologiaBase.COLAS) {
+            rabbit.ponerPolitica(c.politica(), TopologiaBase.politicaDlx(c.nombre(), c.claveMuertos()));
+        }
+        hecho.add(TopologiaBase.COLAS.size() + " políticas de dead-lettering (policy.email.dlx, policy.kitchen.dlx, policy.invoice.dlx)");
         rabbit.ponerPolitica(TopologiaBase.POLITICA_HA, TopologiaBase.POLITICA_HA_CUERPO);
-        hecho.add("política " + TopologiaBase.POLITICA_HA + " (colas q.cmd.* replicadas en los dos nodos)");
+        hecho.add("política " + TopologiaBase.POLITICA_HA + " (las DLQ y demás colas q.cmd.* replicadas en los dos nodos)");
         log.info("Topología base declarada: {}", hecho);
         return new Resultado("topología base declarada", hecho);
     }
@@ -200,20 +224,24 @@ public class MqAdminService {
 
     // ---------- interno ----------
 
-    // Argumentos con los que una cola manda sus mensajes rechazados a cmd.dead.dlx.
-    private static Map<String, Object> argumentosDlq(String clave) {
-        return Map.of("x-dead-letter-exchange", TopologiaBase.EXCHANGE_MUERTOS, "x-dead-letter-routing-key", clave);
+    // El DLX efectivo de una cola sale de su política (lo normal desde la Spec 037); si trae el argumento
+    // x-dead-letter-* (colas anteriores) se muestra igual.
+    private static String dlx(Map<String, Object> q, String claveArgumento, String clavePolitica) {
+        Map<?, ?> args = q.get("arguments") instanceof Map<?, ?> m ? m : Map.of();
+        Map<?, ?> efectiva = q.get("effective_policy_definition") instanceof Map<?, ?> m ? m : Map.of();
+        Object valor = args.get(claveArgumento) != null ? args.get(claveArgumento) : efectiva.get(clavePolitica);
+        return valor == null ? null : valor.toString();
     }
 
     private static ColaInfo aCola(Map<String, Object> q) {
         String nombre = texto(q, "name");
-        Map<?, ?> args = q.get("arguments") instanceof Map<?, ?> m ? m : Map.of();
         Object espejos = q.get("slave_nodes");
+        String politica = q.get("policy") == null ? null : q.get("policy").toString();
         return new ColaInfo(nombre, Boolean.TRUE.equals(q.get("durable")), nombre.endsWith(".dlq"),
-                args.get("x-dead-letter-exchange") == null ? null : args.get("x-dead-letter-exchange").toString(),
-                args.get("x-dead-letter-routing-key") == null ? null : args.get("x-dead-letter-routing-key").toString(),
+                dlx(q, "x-dead-letter-exchange", "dead-letter-exchange"),
+                dlx(q, "x-dead-letter-routing-key", "dead-letter-routing-key"),
                 numero(q, "messages"), (int) numero(q, "consumers"), q.get("node") == null ? null : q.get("node").toString(),
-                espejos instanceof List<?> l ? l.size() : 0);
+                espejos instanceof List<?> l ? l.size() : 0, politica);
     }
 
     private static String texto(Map<String, Object> m, String campo) {

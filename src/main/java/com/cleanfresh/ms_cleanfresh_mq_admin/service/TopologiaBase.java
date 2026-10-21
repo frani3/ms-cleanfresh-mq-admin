@@ -4,8 +4,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * La topología del enunciado (la misma de {@code EP2/despliegue/mq/definitions.json}): 3 exchanges,
- * 3 colas de comandos, cada una con su DLQ, y 11 bindings.
+ * La topología de la guía del profesor (la misma de {@code EP2/despliegue/mq/definitions.json} y de la carpeta
+ * {@code politicas/}): 3 exchanges, 3 colas de comandos sin argumentos, cada una con su DLQ, 9 bindings y las
+ * políticas de dead-lettering (Spec 037).
  */
 public final class TopologiaBase {
 
@@ -16,6 +17,11 @@ public final class TopologiaBase {
     public record Cola(String nombre, String claveMuertos) {
         public String dlq() {
             return nombre + ".dlq";
+        }
+
+        /** policy.email.dlx para q.cmd.email, como en la guía. */
+        public String politica() {
+            return nombrePoliticaDlx(nombre);
         }
     }
 
@@ -32,17 +38,16 @@ public final class TopologiaBase {
             new Cola("q.cmd.kitchen", "kitchen.ticket"),
             new Cola("q.cmd.invoice", "invoice.gen"));
 
-    // Los .* y .# extra de cmd.topic hacen que email.send.high, kitchen.ticket.thermal e invoice.gen.pdf
-    // lleguen a su cola ('*' es exactamente una palabra).
+    // Los 9 bindings de la guía. En cmd.topic se usa '#' (cero o más palabras) para que lleguen las variantes
+    // email.send.high, kitchen.ticket.thermal e invoice.gen.pdf: la guía lo hace con email.# y avisa que
+    // invoice.* no atrapa invoice.gen.pdf "sin adaptar ese patrón", así que invoice también va con '#'.
     public static final List<Binding> BINDINGS = List.of(
             new Binding(EXCHANGE_DIRECT, "q.cmd.email", "email.send"),
             new Binding(EXCHANGE_DIRECT, "q.cmd.kitchen", "kitchen.ticket"),
             new Binding(EXCHANGE_DIRECT, "q.cmd.invoice", "invoice.gen"),
-            new Binding(EXCHANGE_TOPIC, "q.cmd.email", "email.*"),
-            new Binding(EXCHANGE_TOPIC, "q.cmd.email", "email.send.*"),
+            new Binding(EXCHANGE_TOPIC, "q.cmd.email", "email.#"),
             new Binding(EXCHANGE_TOPIC, "q.cmd.kitchen", "kitchen.#"),
-            new Binding(EXCHANGE_TOPIC, "q.cmd.invoice", "invoice.*"),
-            new Binding(EXCHANGE_TOPIC, "q.cmd.invoice", "invoice.gen.*"),
+            new Binding(EXCHANGE_TOPIC, "q.cmd.invoice", "invoice.#"),
             new Binding(EXCHANGE_MUERTOS, "q.cmd.email.dlq", "email.send"),
             new Binding(EXCHANGE_MUERTOS, "q.cmd.kitchen.dlq", "kitchen.ticket"),
             new Binding(EXCHANGE_MUERTOS, "q.cmd.invoice.dlq", "invoice.gen"));
@@ -55,6 +60,32 @@ public final class TopologiaBase {
             "apply-to", "queues",
             "priority", 0,
             "definition", Map.of("ha-mode", "all", "ha-sync-mode", "automatic"));
+
+    /**
+     * Nombre de la política de dead-lettering de una cola: {@code policy.email.dlx} para {@code q.cmd.email} (como la
+     * guía) y {@code policy.<cola>.dlx} para cualquier otra.
+     */
+    public static String nombrePoliticaDlx(String cola) {
+        String corto = cola.startsWith("q.cmd.") ? cola.substring("q.cmd.".length()) : cola;
+        return "policy." + corto + ".dlx";
+    }
+
+    /**
+     * Cuerpo de la política de dead-lettering de una cola: patrón exacto de la cola, DLX {@code cmd.dead.dlx} y la
+     * routing key de su DLQ. En RabbitMQ solo rige <b>una</b> política por cola (la de mayor prioridad): esta lleva
+     * prioridad 1 y además la replicación, para que la cola no pierda la de {@code ha-all} (prioridad 0).
+     */
+    public static Map<String, Object> politicaDlx(String cola, String claveMuertos) {
+        return Map.of(
+                "pattern", "^" + cola.replace(".", "\\.") + "$",
+                "apply-to", "queues",
+                "priority", 1,
+                "definition", Map.of(
+                        "dead-letter-exchange", EXCHANGE_MUERTOS,
+                        "dead-letter-routing-key", claveMuertos,
+                        "ha-mode", "all",
+                        "ha-sync-mode", "automatic"));
+    }
 
     private TopologiaBase() {
     }

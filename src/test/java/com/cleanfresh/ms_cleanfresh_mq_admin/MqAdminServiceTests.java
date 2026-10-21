@@ -42,16 +42,74 @@ class MqAdminServiceTests {
     // ---------- colas ----------
 
     @Test
-    void crearColaCreaPrimeroLaDlqYSuBindingYDespuesLaColaConSuDlx() {
+    void crearColaCreaPrimeroLaDlqYSuBindingLuegoLaColaSinArgumentosYAlFinalSuPolitica() {
         Resultado r = servicio.crearCola("q.cmd.pagos", null);
 
         InOrder orden = inOrder(rabbit);
         orden.verify(rabbit).declararExchange("cmd.dead.dlx", "direct");
         orden.verify(rabbit).declararCola("q.cmd.pagos.dlq", Map.of());
         orden.verify(rabbit).crearBinding("cmd.dead.dlx", "q.cmd.pagos.dlq", "q.cmd.pagos");
-        orden.verify(rabbit).declararCola("q.cmd.pagos", Map.of(
-                "x-dead-letter-exchange", "cmd.dead.dlx", "x-dead-letter-routing-key", "q.cmd.pagos"));
+        // sin argumentos x-dead-letter-*: el DLX lo da la política, como en la guía del profesor
+        orden.verify(rabbit).declararCola("q.cmd.pagos", Map.of());
+        // y la política va después de crear la cola, para que RabbitMQ cree también sus espejos
+        orden.verify(rabbit).ponerPolitica(eq("policy.pagos.dlx"), any());
         assertEquals(2, r.detalle().size());
+        assertTrue(r.detalle().get(1).contains("policy.pagos.dlx"));
+    }
+
+    @Test
+    void unaColaQueYaExisteNoSeVuelveACrearNiSePisaSuPolitica() {
+        when(rabbit.colas()).thenReturn(List.of(Map.of("name", "q.cmd.email", "durable", true)));
+
+        for (ColaRequest solicitud : new ColaRequest[]{null, new ColaRequest(false, null), new ColaRequest(true, "otra.clave")}) {
+            ResponseStatusException e = assertThrows(ResponseStatusException.class, () -> servicio.crearCola("q.cmd.email", solicitud));
+            assertEquals(HttpStatus.CONFLICT, estado(e));
+        }
+
+        // no se tocó nada: ni la cola, ni su DLQ, ni su política (policy.email.dlx sigue con su clave original)
+        verify(rabbit, never()).declararCola(anyString(), any());
+        verify(rabbit, never()).crearBinding(anyString(), anyString(), anyString());
+        verify(rabbit, never()).ponerPolitica(anyString(), any());
+    }
+
+    @Test
+    void crearUnaColaConOtroNombreSigueSiendoPosibleAunqueHayaOtras() {
+        when(rabbit.colas()).thenReturn(List.of(Map.of("name", "q.cmd.email", "durable", true)));
+
+        servicio.crearCola("q.cmd.pagos", null);
+
+        verify(rabbit).declararCola("q.cmd.pagos", Map.of());
+        verify(rabbit).ponerPolitica(eq("policy.pagos.dlx"), any());
+    }
+
+    @Test
+    void laPoliticaDeDeadLetteringLlevaPatronExactoDlxClaveYReplicacion() {
+        servicio.crearCola("q.demo.pagos", null);
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<Map<String, Object>> cuerpo = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(rabbit).ponerPolitica(eq("policy.q.demo.pagos.dlx"), cuerpo.capture());
+        Map<String, Object> politica = cuerpo.getValue();
+        // el punto del nombre se escapa y el patrón es exacto: no alcanza a q.demo.pagos.dlq ni a otras colas
+        assertEquals("^q\\.demo\\.pagos$", politica.get("pattern"));
+        assertEquals("queues", politica.get("apply-to"));
+        // prioridad 1: gana a ha-all (0) y por eso lleva también la replicación (solo rige una política por cola)
+        assertEquals(1, politica.get("priority"));
+        assertEquals(Map.of(
+                "dead-letter-exchange", "cmd.dead.dlx",
+                "dead-letter-routing-key", "q.demo.pagos",
+                "ha-mode", "all",
+                "ha-sync-mode", "automatic"), politica.get("definition"));
+        assertFalse(java.util.regex.Pattern.matches((String) politica.get("pattern"), "q.demo.pagos.dlq"));
+        assertTrue(java.util.regex.Pattern.matches((String) politica.get("pattern"), "q.demo.pagos"));
+    }
+
+    @Test
+    void elNombreDeLaPoliticaSigueLaGuia() {
+        assertEquals("policy.email.dlx", com.cleanfresh.ms_cleanfresh_mq_admin.service.TopologiaBase.nombrePoliticaDlx("q.cmd.email"));
+        assertEquals("policy.kitchen.dlx", com.cleanfresh.ms_cleanfresh_mq_admin.service.TopologiaBase.nombrePoliticaDlx("q.cmd.kitchen"));
+        assertEquals("policy.invoice.dlx", com.cleanfresh.ms_cleanfresh_mq_admin.service.TopologiaBase.nombrePoliticaDlx("q.cmd.invoice"));
+        assertEquals("policy.q.demo.pagos.dlx", com.cleanfresh.ms_cleanfresh_mq_admin.service.TopologiaBase.nombrePoliticaDlx("q.demo.pagos"));
     }
 
     @Test
@@ -59,8 +117,11 @@ class MqAdminServiceTests {
         servicio.crearCola("q.cmd.pagos", new ColaRequest(true, "pagos.cobrar"));
 
         verify(rabbit).crearBinding("cmd.dead.dlx", "q.cmd.pagos.dlq", "pagos.cobrar");
-        verify(rabbit).declararCola("q.cmd.pagos", Map.of(
-                "x-dead-letter-exchange", "cmd.dead.dlx", "x-dead-letter-routing-key", "pagos.cobrar"));
+        verify(rabbit).declararCola("q.cmd.pagos", Map.of());
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<Map<String, Object>> cuerpo = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(rabbit).ponerPolitica(eq("policy.pagos.dlx"), cuerpo.capture());
+        assertEquals("pagos.cobrar", ((Map<?, ?>) cuerpo.getValue().get("definition")).get("dead-letter-routing-key"));
     }
 
     @Test
@@ -68,6 +129,7 @@ class MqAdminServiceTests {
         servicio.crearCola("q.simple", new ColaRequest(false, null));
 
         verify(rabbit).declararCola("q.simple", Map.of());
+        verify(rabbit, never()).ponerPolitica(anyString(), any());
         verify(rabbit, never()).crearBinding(anyString(), anyString(), anyString());
         verify(rabbit, never()).declararExchange(anyString(), anyString());
     }
@@ -94,7 +156,21 @@ class MqAdminServiceTests {
 
         verify(rabbit).eliminarCola("q.cmd.pagos");
         verify(rabbit).eliminarCola("q.cmd.pagos.dlq");
-        assertEquals(2, r.detalle().size());
+        // y la política de dead-lettering de la cola, que ya no tiene a quién aplicarse
+        verify(rabbit).eliminarPolitica("policy.pagos.dlx");
+        assertEquals(3, r.detalle().size());
+    }
+
+    @Test
+    void siLaColaNoTeniaPoliticaEliminarlaNoFalla() {
+        org.mockito.Mockito.doThrow(org.springframework.web.client.HttpClientErrorException.create(
+                        HttpStatus.NOT_FOUND, "Not Found", null, new byte[0], null))
+                .when(rabbit).eliminarPolitica("policy.q.simple.dlx");
+
+        Resultado r = servicio.eliminarCola("q.simple", false);
+
+        verify(rabbit).eliminarCola("q.simple");
+        assertEquals(List.of("cola q.simple eliminada"), r.detalle());
     }
 
     @Test
@@ -182,14 +258,39 @@ class MqAdminServiceTests {
 
         verify(rabbit, times(3)).declararExchange(anyString(), anyString());
         verify(rabbit, times(6)).declararCola(anyString(), any());
-        verify(rabbit, times(11)).crearBinding(anyString(), anyString(), anyString());
+        // los 9 bindings de la guía
+        verify(rabbit, times(9)).crearBinding(anyString(), anyString(), anyString());
+        verify(rabbit).crearBinding("cmd.topic", "q.cmd.email", "email.#");
+        verify(rabbit).crearBinding("cmd.topic", "q.cmd.kitchen", "kitchen.#");
+        verify(rabbit).crearBinding("cmd.topic", "q.cmd.invoice", "invoice.#");
+        verify(rabbit).crearBinding("cmd.dead.dlx", "q.cmd.invoice.dlq", "invoice.gen");
+        verify(rabbit, never()).crearBinding(anyString(), anyString(), eq("email.*"));
+        verify(rabbit, never()).crearBinding(anyString(), anyString(), eq("invoice.*"));
+        // las colas, todas sin argumentos
+        verify(rabbit).declararCola("q.cmd.email", Map.of());
+        verify(rabbit, never()).declararCola(anyString(), org.mockito.ArgumentMatchers.argThat(m -> m != null && !m.isEmpty()));
+        // 3 políticas de dead-lettering (guía) + ha-all, y todas después de crear las colas
+        verify(rabbit, times(4)).ponerPolitica(anyString(), any());
         InOrder orden = inOrder(rabbit);
         orden.verify(rabbit, times(6)).declararCola(anyString(), any());
+        orden.verify(rabbit).ponerPolitica(eq("policy.email.dlx"), any());
+        orden.verify(rabbit).ponerPolitica(eq("policy.kitchen.dlx"), any());
+        orden.verify(rabbit).ponerPolitica(eq("policy.invoice.dlx"), any());
         orden.verify(rabbit).ponerPolitica(eq("ha-all"), any());
-        verify(rabbit).crearBinding("cmd.topic", "q.cmd.kitchen", "kitchen.#");
-        verify(rabbit).crearBinding("cmd.dead.dlx", "q.cmd.invoice.dlq", "invoice.gen");
-        verify(rabbit).declararCola("q.cmd.email", Map.of(
-                "x-dead-letter-exchange", "cmd.dead.dlx", "x-dead-letter-routing-key", "email.send"));
+    }
+
+    @Test
+    void lasTresPoliticasDeLaBaseCoincidenConLasDeLaGuia() {
+        servicio.declararBase();
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<Map<String, Object>> cuerpo = org.mockito.ArgumentCaptor.forClass(Map.class);
+        verify(rabbit).ponerPolitica(eq("policy.kitchen.dlx"), cuerpo.capture());
+        assertEquals("^q\\.cmd\\.kitchen$", cuerpo.getValue().get("pattern"));
+        Map<?, ?> definicion = (Map<?, ?>) cuerpo.getValue().get("definition");
+        assertEquals("cmd.dead.dlx", definicion.get("dead-letter-exchange"));
+        assertEquals("kitchen.ticket", definicion.get("dead-letter-routing-key"));
+        assertEquals("all", definicion.get("ha-mode"));
     }
 
     @Test
@@ -199,7 +300,8 @@ class MqAdminServiceTests {
 
         // idempotente: PUT/POST sobre lo que ya existe, sin que el servicio guarde estado
         verify(rabbit, times(6)).declararExchange(anyString(), anyString());
-        verify(rabbit, times(22)).crearBinding(anyString(), anyString(), anyString());
+        verify(rabbit, times(18)).crearBinding(anyString(), anyString(), anyString());
+        verify(rabbit, times(8)).ponerPolitica(anyString(), any());
     }
 
     // ---------- métricas ----------
@@ -261,7 +363,10 @@ class MqAdminServiceTests {
                 Map.of("name", "cmd.topic", "type", "topic", "durable", true)));
         when(rabbit.colas()).thenReturn(List.of(Map.of("name", "q.cmd.email", "durable", true, "messages", 0, "consumers", 1,
                 "node", "rabbit@rabbit1", "slave_nodes", List.of("rabbit@rabbit2"),
-                "arguments", Map.of("x-dead-letter-exchange", "cmd.dead.dlx", "x-dead-letter-routing-key", "email.send"))));
+                "policy", "policy.email.dlx",
+                "effective_policy_definition", Map.of("dead-letter-exchange", "cmd.dead.dlx", "dead-letter-routing-key", "email.send",
+                        "ha-mode", "all"),
+                "arguments", Map.of())));
         when(rabbit.bindings()).thenReturn(List.of(
                 Map.of("source", "", "destination", "q.cmd.email", "destination_type", "queue", "routing_key", "q.cmd.email"),
                 Map.of("source", "cmd.topic", "destination", "q.cmd.email", "destination_type", "queue", "routing_key", "email.*")));
@@ -276,5 +381,21 @@ class MqAdminServiceTests {
         assertEquals("cmd.dead.dlx", t.colas().get(0).exchangeMuertos());
         assertEquals("email.send", t.colas().get(0).claveMuertos());
         assertEquals(1, t.colas().get(0).espejos());
+        assertEquals("policy.email.dlx", t.colas().get(0).politica());
+    }
+
+    @Test
+    void unaColaAnteriorConElDlxComoArgumentoSeMuestraIgual() {
+        when(rabbit.nodosDelCluster()).thenReturn(List.of());
+        when(rabbit.exchanges()).thenReturn(List.of());
+        when(rabbit.bindings()).thenReturn(List.of());
+        when(rabbit.colas()).thenReturn(List.of(Map.of("name", "q.vieja", "durable", true, "messages", 0, "consumers", 0,
+                "arguments", Map.of("x-dead-letter-exchange", "cmd.dead.dlx", "x-dead-letter-routing-key", "vieja"))));
+
+        var cola = servicio.topologia().colas().get(0);
+
+        assertEquals("cmd.dead.dlx", cola.exchangeMuertos());
+        assertEquals("vieja", cola.claveMuertos());
+        org.junit.jupiter.api.Assertions.assertNull(cola.politica());
     }
 }

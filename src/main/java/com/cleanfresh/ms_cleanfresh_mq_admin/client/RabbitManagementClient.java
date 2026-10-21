@@ -130,6 +130,10 @@ public class RabbitManagementClient {
                 .body(cuerpo).retrieve().toBodilessEntity());
     }
 
+    public void eliminarPolitica(String nombre) {
+        usar(n -> n.http().delete().uri("/policies/{v}/{n}", vhost, nombre).retrieve().toBodilessEntity());
+    }
+
     // ---------- interno ----------
 
     private static String codificar(String valor) {

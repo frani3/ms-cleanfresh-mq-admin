@@ -344,7 +344,9 @@ Cliente ahora elige la sucursal en el catálogo y ve qué servicios hay disponib
 
 Reemplaza a SQS. Clúster de dos nodos (`rabbit1`, `rabbit2`) en su propia EC2, con colas espejadas (política
 `ha-all`), 3 colas de comandos (`q.cmd.email`, `q.cmd.kitchen`, `q.cmd.invoice`) cada una con su DLQ, y los exchanges
-`cmd.direct` (direct), `cmd.topic` (topic) y `cmd.dead.dlx` (direct). `orders` publica comandos
+`cmd.direct` (direct), `cmd.topic` (topic) y `cmd.dead.dlx` (direct). **Topología como la guía del profesor (Spec 037):** colas
+sin argumentos, dead-lettering por **políticas** (`policy.email.dlx`, `policy.kitchen.dlx`, `policy.invoice.dlx`; prioridad 1, llevan
+también la replicación porque solo rige una política por cola) y 9 bindings (`cmd.topic`: `email.#`, `kitchen.#`, `invoice.#`). `orders` publica comandos
 (`email.send`, `kitchen.ticket`, `invoice.gen`; las órdenes de *Servicio exprés* van por `cmd.topic` con las
 variantes `.high`, `.thermal` y `.pdf`) y `notificaciones` los consume con ACK manual, 3 intentos e idempotencia por
 `eventId`; lo que falla va a la DLQ y queda registrado (`/api/muertos`). `ms-cleanfresh-mq-admin` crea y elimina

@@ -15,14 +15,14 @@ Documentación interactiva: `http://localhost:8086/swagger-ui.html` (OpenAPI en 
 
 | Método | Ruta | Qué hace |
 |---|---|---|
-| GET | `/api/mq/topologia` | Nodos del clúster, exchanges, colas (con su DLX y sus espejos) y bindings |
-| POST | `/api/mq/queues/{nombre}` | Crea una cola durable. Por defecto crea también `{nombre}.dlq`, enlazada a `cmd.dead.dlx`. Cuerpo opcional: `{ "conDlq": false }` o `{ "claveDlq": "mi.clave" }` |
-| DELETE | `/api/mq/queues/{nombre}?conDlq=true` | Elimina la cola (y su DLQ si `conDlq=true`) |
+| GET | `/api/mq/topologia` | Nodos del clúster, exchanges, colas (con su DLX efectivo, su política y sus espejos) y bindings |
+| POST | `/api/mq/queues/{nombre}` | Crea una cola durable sin argumentos. Por defecto crea también `{nombre}.dlq`, enlazada a `cmd.dead.dlx`, y la política `policy.{nombre}.dlx` que le asigna ese DLX (como en la guía). Cuerpo opcional: `{ "conDlq": false }` o `{ "claveDlq": "mi.clave" }`. Si la cola ya existe responde `409` y no la toca |
+| DELETE | `/api/mq/queues/{nombre}?conDlq=true` | Elimina la cola, su política de DLX y, con `conDlq=true`, su DLQ |
 | POST | `/api/mq/exchanges/{nombre}` | Crea un exchange durable. Cuerpo: `{ "tipo": "direct" }` o `"topic"` |
 | DELETE | `/api/mq/exchanges/{nombre}` | Elimina un exchange |
 | POST | `/api/mq/bindings` | Crea un binding. Cuerpo: `{ "exchange": "...", "cola": "...", "clave": "..." }` |
 | DELETE | `/api/mq/bindings` | Elimina el binding con ese cuerpo |
-| POST | `/api/mq/topologia/base` | Vuelve a declarar la topología del enunciado (3 exchanges, 6 colas, 11 bindings y la política `ha-all`). Idempotente: se puede repetir y repara lo que falte |
+| POST | `/api/mq/topologia/base` | Vuelve a declarar la topología de la guía del profesor (3 exchanges, 6 colas sin argumentos, 9 bindings, las políticas `policy.email.dlx`, `policy.kitchen.dlx`, `policy.invoice.dlx` y `ha-all`). Idempotente: se puede repetir y repara lo que falte |
 | GET | `/api/mq/metricas` | Mensajes por cola y por DLQ; `hayAlerta` y `alertas` si alguna DLQ tiene mensajes |
 
 Reglas: los nombres usan letras, números, punto, guion y guion bajo (hasta 100); los exchanges `amq.*` del
@@ -36,8 +36,8 @@ una DLQ pasa a tener mensajes (o cambia su cantidad) y un aviso cuando vuelven a
 la misma línea en cada vuelta. Las cifras vienen de las estadísticas de la API de RabbitMQ, que se refrescan cada pocos segundos:
 un mensaje recién publicado o consumido puede tardar unos segundos en verse.
 
-La política de alta disponibilidad (`ha-all`) cubre las colas `q.cmd.*`: una cola creada con otro nombre no
-queda replicada en los dos nodos.
+La política `ha-all` cubre las colas `q.cmd.*`; la política de DLX de cada cola lleva además la replicación (prioridad 1),
+así que toda cola creada con DLQ queda replicada en los dos nodos. Una cola creada sin DLQ y con otro nombre no.
 
 ## Configuración (variables de entorno)
 
