@@ -74,4 +74,6 @@ docker run -p 8086:8086 -e RABBITMQ_USER=... -e RABBITMQ_PASSWORD=... -e RABBITM
 
 ## Arquitectura y decisiones técnicas
 
-Ver [`CLAUDE.md`](CLAUDE.md) y, en el repo del frontend, `EP2/specs/033-spec-rabbitmq.md`.
+Este servicio es parte de un sistema de varios repositorios. La documentación está en el repo del frontend:
+[`CLAUDE.md`](https://github.com/frani3/cleanfresh-frontend/blob/main/CLAUDE.md) (contexto, AWS, roles y decisiones), [`EP2/ARQUITECTURA.md`](https://github.com/frani3/cleanfresh-frontend/blob/main/EP2/ARQUITECTURA.md) y el
+[índice de la entrega 2](https://github.com/frani3/cleanfresh-frontend/blob/main/EP2/README.md). El [`CLAUDE.md`](CLAUDE.md) de este repo resume lo propio del servicio. La especificación de este servicio es la [Spec 033](https://github.com/frani3/cleanfresh-frontend/blob/main/EP2/specs/033-spec-rabbitmq.md).
